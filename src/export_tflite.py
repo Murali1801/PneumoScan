@@ -8,8 +8,9 @@ Produces two files next to the checkpoint:
                         (~4x smaller, no calibration data needed, accuracy drop
                         is usually well under one point)
 
-Both take the same input the Keras model does: float32 (1, 224, 224, 3) in
-[0, 255], already CLAHE'd.  Parity against Keras is verified before writing.
+Both take the same input the Keras model does: float32 (1, H, W, 3) in [0, 255]
+at the configured --img-size, already CLAHE'd.  Parity against Keras is verified
+on real test images before either file is written.
 """
 from __future__ import annotations
 
@@ -37,7 +38,12 @@ def _to_saved_model(model: keras.Model, out_dir: Path) -> Path:
     `from_keras_model` - the latter silently fails on Keras 3 functional models."""
     if out_dir.exists():
         shutil.rmtree(out_dir)
-    model.export(str(out_dir))
+    try:
+        # verbose=False silences the wall of TensorSpec resource lines Keras
+        # prints while tracing the export signature.
+        model.export(str(out_dir), verbose=False)
+    except TypeError:
+        model.export(str(out_dir))
     return out_dir
 
 
@@ -111,7 +117,8 @@ def main() -> None:
     out = cfg.run_dir / "tflite_export.json"
     out.write_text(json.dumps(results, indent=2), encoding="utf-8")
     print(f"\nwrote {out}")
-    print("Both models expect float32 (1, 224, 224, 3) in [0, 255], CLAHE applied.")
+    print(f"Both models expect float32 (1, {cfg.img_size}, {cfg.img_size}, 3) "
+          "in [0, 255], CLAHE applied.")
 
 
 if __name__ == "__main__":

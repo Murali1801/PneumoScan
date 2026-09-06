@@ -1,8 +1,9 @@
-# Chest X-ray Screening with Grad-CAM Explainability
+# PneumoScan — Explainable Chest X-ray Pneumonia Screening
 
-Binary pneumonia screening on the **Kermany** paediatric chest X-ray dataset, with
-CLAHE preprocessing, DenseNet121 / EfficientNet-B0 transfer learning, **Grad-CAM**
-visual explanations, and a TensorFlow Lite export for the mobile app.
+Binary pneumonia screening on **adult** chest radiographs from the RSNA Pneumonia
+Detection Challenge, with CLAHE preprocessing, DenseNet121 / EfficientNet-B0
+transfer learning, **Grad-CAM scored against radiologist bounding boxes**, and a
+TensorFlow Lite export for the mobile app.
 
 *Data Science in Healthcare mini project — Department of Computer Engineering,
 St. John College of Engineering and Management.
@@ -13,10 +14,12 @@ Murlidhar Acharya (A-02) · Urvi Khandelwal (A-46) · Srushti Raut (B-35).*
 ## Pipeline
 
 ```
-Kaggle: Kermany chest X-rays
+Kaggle: RSNA Pneumonia Detection Challenge (26,684 adult DICOMs)
         │
-        ├─ 1. prepare_data.py ── CLAHE ──► 224×224 PNG
-        │                    └─ patient-grouped, class-stratified splits
+        ├─ 1. prepare_data.py ── DICOM → CLAHE ──► 224×224 PNG
+        │                    ├─ 70/15/15 stratified, patient-grouped splits
+        │                    ├─ radiologist boxes rescaled into the resized frame
+        │                    └─ cohort table from DICOM headers (age/sex/view)
         │
         ├─ 2. train.py ──► phase 1 frozen head → phase 2 fine-tune
         │                  DenseNet121 | EfficientNet-B0
@@ -24,20 +27,38 @@ Kaggle: Kermany chest X-rays
         │                  → reports/<run>/  metrics.json, ROC/PR, confusion matrix
         │
         ├─ 3. make_gradcam_figures.py ──► Grad-CAM / Grad-CAM++ panels
+        │                             └─► localization.json — the XAI *metric*
         │
         └─ 4. export_tflite.py ──► <run>.tflite  +  <run>_dynamic.tflite
 ```
+
+## The dataset
+
+| | |
+|---|---|
+| Source | RSNA Pneumonia Detection Challenge (Kaggle competition) |
+| Origin | Re-annotated subset of NIH ChestX-ray, boxes drawn by radiologists |
+| Images | 26,684 labelled DICOMs, 1024×1024 |
+| Population | **Adult** — verify it yourself in `reports/cohort.csv` |
+| Labels | `Target` 1 = Lung Opacity (~6.0k), 0 = Normal (~8.9k) + No Lung Opacity/Not Normal (~11.8k) |
+| Boxes | ~9,500, on the positive cases only |
+
+The competition's own `stage_2_test_images/` is unlabelled — it was the
+leaderboard set — so all three splits are made here from the 26,684 labelled
+images.
+
+**Accept the competition rules once** before downloading, or Kaggle returns 403:
+https://www.kaggle.com/competitions/rsna-pneumonia-detection-challenge/rules
 
 ## Where it runs
 
 Training needs TensorFlow, and TensorFlow has **no wheel for Python 3.13/3.14**
 and no native Windows GPU support since 2.11. So:
 
-* **Training → Google Colab (free T4).** Open `notebooks/train_colab.ipynb`,
-  set the runtime to T4 GPU, and run the cells top to bottom. Full run
-  (download + both backbones + Grad-CAM + TFLite) is roughly 45–60 minutes.
-* **Locally** you can still run everything *except* training, in a Python 3.11/3.12
-  environment:
+* **Training → Google Colab (free T4).** Open `notebooks/train_colab.ipynb`, set
+  the runtime to T4 GPU, run top to bottom. Budget **90–120 minutes**; section 5
+  offers a 20-minute rehearsal on a subsample first.
+* **Locally** everything except training works in Python 3.11/3.12:
 
   ```bash
   py -3.11 -m venv .venv
@@ -48,73 +69,95 @@ and no native Windows GPU support since 2.11. So:
 ## Running it by hand
 
 ```bash
-python scripts/prepare_data.py --download          # needs ~/.kaggle/kaggle.json
+python scripts/prepare_data.py --download           # needs Kaggle creds + rules accepted
+python src/train.py --subsample-train 3000 --tag rehearsal   # 20-min dry run
 python src/train.py --backbone densenet121
 python src/train.py --backbone efficientnetb0
 python scripts/make_gradcam_figures.py --backbone densenet121
 python src/export_tflite.py --backbone densenet121
 ```
 
-Every hyperparameter in `src/config.py` is exposed as a CLI flag, e.g.
-`--clahe-clip 3.0 --batch-size 16 --finetune-epochs 30 --no-use-class-weights`.
+Every field in `src/config.py` is a CLI flag, e.g. `--clahe-clip 3.0
+--batch-size 16 --iou-threshold 0.3 --exclude-not-normal --no-use-class-weights`.
 
 ## Design decisions worth defending in the viva
 
-**Patient-grouped splits.** Kermany ships several images per child
-(`person23_bacteria_76.jpeg`, `person23_bacteria_77.jpeg`). A random 90/10 split
-puts one of a patient's images in train and another in validation, so the model
-scores well by recognising the *patient* rather than the disease. `src/data.py`
-extracts a patient id from every filename and splits with
-`StratifiedGroupKFold`, then asserts that no patient id appears in two splits.
+**Grad-CAM is measured, not admired.** RSNA's boxes make explainability
+quantitative. `src/localization.py` reports three metrics — pointing game
+(is the hottest pixel inside a box?), energy pointing game (what share of the
+heatmap's mass is inside?), and IoU@τ — each against a **chance baseline** equal
+to the boxes' own share of the image. Boxes cover roughly a quarter of a film, so
+a random heatmap already "scores" ~0.25 on the pointing game; the number that
+means something is the **lift** over that baseline. A metric reported without its
+baseline is not evidence, and this is the single strongest thing in the project.
 
-**The official validation folder is unusable.** It contains 16 images — 8 per
-class. A threshold or an early-stopping decision made on 16 images is noise, so
-it is merged back into train and a real 10% validation set is carved out.
+**"Not Normal" films are kept as negatives.** A third of the dataset is abnormal
+for some reason other than pneumonia. Dropping them makes the task pneumonia-vs-
+healthy, which is easier and clinically dishonest — a screening tool has to tell
+pneumonia from *other pathology*, not just from healthy lungs. Run with
+`--exclude-not-normal` to measure exactly how much of your score came from that
+easier problem.
 
-**The test folder is never touched.** Thresholds are chosen on validation
-(Youden's J), model selection is on validation AUROC. The test set is only ever
-reported on, with a bootstrap 95% CI on AUROC.
+**The cohort table is evidence, not an assertion.** `reports/cohort.csv` reads
+age, sex and view straight from the DICOM headers, so "this is an adult dataset"
+is something the report demonstrates rather than claims.
+
+**MONOCHROME1 is handled.** Some DICOMs store an inverted greyscale ramp. Ignore
+the photometric interpretation and those X-rays silently arrive as photographic
+negatives — a class of bug that quietly costs accuracy and is nearly invisible in
+a thumbnail.
+
+**Patient-grouped, stratified splits, asserted in code.** `StratifiedGroupKFold`
+on `patientId`, then an assertion that no group spans two splits. RSNA issues one
+patientId per image so this is mostly a safety net — but the guarantee is
+enforced rather than assumed. *Honest caveat:* RSNA is re-annotated from NIH,
+where one person can contribute several studies, and that mapping is not
+published, so a little same-person leakage is undetectable from this data alone.
+
+**Byte-level duplicate check.** Ids can't detect the same radiograph filed twice
+under different names, so `prepare_data.py` md5-hashes every file and reports any
+image appearing in two splits.
+
+**The test set is never touched.** Thresholds come from validation (Youden's J),
+model selection from validation AUROC. Test is reported once, with a bootstrap
+95% CI, and `metrics.json` also carries the numbers at a plain 0.5 threshold so
+the effect of the operating point is visible rather than hidden.
 
 **CLAHE, not global histogram equalisation.** Global equalisation blows out the
 mediastinum and flattens the lung fields. CLAHE equalises inside 8×8 tiles and
-clips the histogram first, so consolidation and infiltrates become visible
-without amplifying noise. The exact same `clahe_image()` runs offline for
-training and at inference in the demo — one implementation, so there is no
-train/serve skew.
+clips the histogram first. The same `clahe_image()` runs offline for training and
+at inference in the demo — one implementation, no train/serve skew.
 
 **No horizontal flip.** Mirroring a chest radiograph produces anatomically
-impossible images (heart on the right) and teaches the model to discard
-laterality. Rotation ±11°, translation 6%, zoom 10% and contrast jitter only.
+impossible images and teaches the model to discard laterality. Rotation ±11°,
+translation 6%, zoom 10%, contrast jitter only.
 
-**BatchNorm stays frozen during fine-tuning.** With batch size 32 on ~4700
-images, recomputing BatchNorm statistics destabilises the pretrained features;
-the backbone is called with `training=False` throughout.
+**BatchNorm frozen during fine-tuning.** With batch size 32, recomputing
+BatchNorm statistics destabilises pretrained features; the backbone is called
+with `training=False` throughout.
 
 **Grad-CAM differentiates the logit, not the sigmoid.** A confident sigmoid sits
-at ~1.0 where its gradient is ~0, which washes the heatmap out. `src/gradcam.py`
-takes the gradient of the pre-sigmoid score, and flips its sign for a NORMAL
-prediction so the map shows evidence for whichever class was predicted.
-
-**Threshold at 0.5 is reported too.** `metrics.json` carries both `test` (tuned
-threshold) and `test_at_0.5`, so the effect of the operating point is visible
-rather than hidden.
+at ~1.0 where its gradient is ~0, which washes the heatmap out. The gradient is
+taken on the pre-sigmoid score, with the sign flipped for a NORMAL prediction so
+the map shows evidence for whichever class was predicted.
 
 ## Layout
 
 ```
-src/config.py        all hyperparameters, mirrored as CLI flags
-src/preprocess.py    CLAHE — shared by training, figures and inference
-src/data.py          indexing + patient-grouped stratified splitting (no TF)
-src/pipeline.py      tf.data input pipeline and augmentation
-src/model.py         DenseNet121 / EfficientNet-B0 heads; named feature_map + logits
-src/train.py         two-phase training
-src/evaluate.py      threshold selection, metrics, ROC/PR/confusion plots
-src/gradcam.py       Grad-CAM and Grad-CAM++ + figure rendering
-src/export_tflite.py SavedModel → TFLite, with Keras-parity check
-scripts/prepare_data.py        download + CLAHE + splits
-scripts/make_gradcam_figures.py explanation panels
-notebooks/train_colab.ipynb    the notebook that actually trains
-app/                           Streamlit demo (stage 5, not built yet)
+src/config.py         all hyperparameters, mirrored as CLI flags
+src/preprocess.py     DICOM reading + CLAHE — shared by training, figures, inference
+src/data.py           RSNA indexing, boxes, splits, duplicate check (no TF)
+src/pipeline.py       tf.data input pipeline and augmentation
+src/model.py          DenseNet121 / EfficientNet-B0; named feature_map + logits
+src/train.py          two-phase training
+src/evaluate.py       threshold selection, metrics, ROC/PR/confusion plots
+src/gradcam.py        Grad-CAM and Grad-CAM++ + figure rendering
+src/localization.py   pointing game / energy / IoU against the radiologist boxes
+src/export_tflite.py  SavedModel → TFLite, with Keras-parity check
+scripts/prepare_data.py          download + DICOM + CLAHE + splits + boxes
+scripts/make_gradcam_figures.py  explanation panels + the localisation report
+notebooks/train_colab.ipynb      the notebook that actually trains
+app/                             Streamlit demo (stage 5, not built yet)
 ```
 
 ## Model input contract
@@ -128,15 +171,26 @@ the `.tflite` file all feed the network identical tensors.
 
 | File | What it is |
 |---|---|
-| `reports/dataset_summary.csv` | images and *patients* per split and class |
-| `reports/clahe_examples.png` | original / CLAHE / added-contrast figure |
+| `reports/dataset_summary.csv` | images and boxes per split and class |
+| `reports/detailed_class_summary.csv` | the three-way RSNA class breakdown |
+| `reports/cohort.csv` | age / sex / view — the proof the data is adult |
+| `reports/clahe_examples.png` | original / CLAHE / radiologist boxes |
 | `reports/<run>/metrics.json` | full metric report, both thresholds, AUROC CI |
+| `reports/<run>/localization.csv` | **the XAI metric**, Grad-CAM vs Grad-CAM++ |
 | `reports/<run>/training_curves.png` | loss, AUC, accuracy across both phases |
 | `reports/<run>/test_curves.png` | ROC and precision-recall |
-| `reports/<run>/test_confusion.png` | confusion matrix + score distribution |
-| `reports/<run>/gradcam_*.png` | explanation panels, including the failure cases |
+| `reports/<run>/gradcam_*.png` | explanation panels with boxes drawn |
 | `reports/backbone_comparison.csv` | DenseNet121 vs EfficientNet-B0 |
 | `checkpoints/<run>.tflite` | mobile model (float32 and int8-weights variants) |
+
+## Limitations to state in the report
+
+* Single dataset, one annotation effort — no external validation set.
+* "Pneumonia" here means *radiographic lung opacity*, which is a radiological
+  finding, not a confirmed clinical diagnosis.
+* NIH-derived, so a small amount of same-patient leakage across splits cannot be
+  ruled out.
+* Screening aid only. Not a diagnostic device.
 
 ## Not built yet
 

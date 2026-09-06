@@ -26,8 +26,8 @@ def predict(model, ds):
 def pick_threshold(y_true, y_prob, strategy: str = "youden") -> float:
     """Choose the operating point on the VALIDATION set only.
 
-    0.5 is an arbitrary cut once the training set is imbalanced (Kermany is
-    roughly 3:1 pneumonia).  Youden's J maximises sensitivity + specificity - 1,
+    0.5 is an arbitrary cut once the training set is imbalanced (RSNA is roughly
+    3:1 against pneumonia).  Youden's J maximises sensitivity + specificity - 1,
     the right objective for a screening tool where a missed pneumonia and a
     false alarm both carry cost.  Tuning it on test would leak the test set.
     """

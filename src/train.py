@@ -1,7 +1,8 @@
-"""Stage 2: two-phase transfer-learning on the CLAHE'd Kermany dataset.
+"""Stage 2: two-phase transfer-learning on the CLAHE'd RSNA dataset.
 
     python src/train.py --backbone densenet121
-    python src/train.py --backbone efficientnetb0 --finetune-epochs 25
+    python src/train.py --backbone efficientnetb0 --finetune-epochs 20
+    python src/train.py --subsample-train 3000 --tag rehearsal   # fast dry run
 
 Phase 1 (warm-up)  - backbone frozen, only the new head trains.  Without this,
                      the large random gradients from an untrained head would
@@ -27,7 +28,7 @@ import tensorflow as tf
 from tensorflow import keras
 
 from config import Config
-from data import class_weights
+from data import class_weights, subsample
 from evaluate import format_report, plot_history, run_evaluation
 from model import build_model, compile_model, set_finetune, trainable_report
 from pipeline import datasets_from_frame
@@ -79,6 +80,10 @@ def train(cfg: Config) -> dict:
     keras.utils.set_random_seed(cfg.seed)
 
     df = load_splits(cfg)
+    if cfg.subsample_train:
+        df = subsample(df, cfg.subsample_train, cfg.seed)
+        print(f"rehearsal mode: training on {(df.split == 'train').sum():,} "
+              "images; val and test left at full size")
     datasets = datasets_from_frame(df, cfg)
     cw = class_weights(df) if cfg.use_class_weights else None
 

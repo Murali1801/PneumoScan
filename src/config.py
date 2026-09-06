@@ -16,7 +16,7 @@ CLASSES = ("NORMAL", "PNEUMONIA")  # index 0, 1 -> label used for the sigmoid ta
 @dataclass
 class Config:
     # ---- paths -------------------------------------------------------------
-    raw_dir: str = str(ROOT / "data" / "raw" / "chest_xray")
+    raw_dir: str = str(ROOT / "data" / "raw")
     processed_dir: str = str(ROOT / "data" / "processed")
     splits_csv: str = str(ROOT / "data" / "splits.csv")
     out_dir: str = str(ROOT / "reports")
@@ -28,8 +28,15 @@ class Config:
     clahe_grid: int = 8
 
     # ---- splitting ---------------------------------------------------------
-    val_frac: float = 0.10  # carved out of the official train folder, patient-grouped
+    # RSNA's own test folder is unlabelled, so all three splits are made here.
+    val_frac: float = 0.15
+    test_frac: float = 0.15
     seed: int = 42
+    # Drop the "No Lung Opacity / Not Normal" films, leaving pneumonia vs truly
+    # normal. Easier task, less clinically honest - off by default.
+    exclude_not_normal: bool = False
+    # Cap the training split for a fast rehearsal on real data (0 = use all).
+    subsample_train: int = 0
 
     # ---- model -------------------------------------------------------------
     backbone: str = "densenet121"
@@ -37,12 +44,12 @@ class Config:
 
     # ---- training ----------------------------------------------------------
     batch_size: int = 32
-    head_epochs: int = 5  # phase 1: frozen backbone, train the head only
+    head_epochs: int = 3  # phase 1: frozen backbone, train the head only
     head_lr: float = 1e-3
-    finetune_epochs: int = 20  # phase 2: unfreeze the backbone (BN kept frozen)
+    finetune_epochs: int = 12  # phase 2: unfreeze the backbone (BN kept frozen)
     finetune_lr: float = 1e-4
     unfreeze_from: float = 0.5  # unfreeze the last 50% of backbone layers
-    patience: int = 6
+    patience: int = 4
     use_class_weights: bool = True
 
     # ---- augmentation (train only) ----------------------------------------
@@ -53,6 +60,9 @@ class Config:
     # Deliberately NO horizontal flip: mirroring a chest X-ray creates
     # anatomically impossible images (dextrocardia) and can teach the model
     # to ignore laterality cues.
+
+    # ---- explainability ----------------------------------------------------
+    iou_threshold: float = 0.5  # tau for IoU@tau against the radiologist boxes
 
     # ---- misc --------------------------------------------------------------
     tag: str = ""  # optional run name suffix
