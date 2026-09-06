@@ -82,11 +82,23 @@ has to actually work instead of passing on a 1:1 scale factor.
 
 ```bash
 python scripts/prepare_data.py --download           # needs Kaggle creds + rules accepted
+python scripts/cohort.py                            # age/sex/view table
 python src/train.py --subsample-train 3000 --tag rehearsal   # 20-min dry run
 python src/train.py
 python scripts/make_gradcam_figures.py
 python src/export_tflite.py
 ```
+
+Two flags matter for long GPU runs:
+
+* `--mixed-precision` — float16 compute on tensor cores, roughly 1.5x faster on a
+  T4 and half the activation memory. Master weights stay float32, and the saved
+  checkpoint is rebuilt as a plain float32 graph so Grad-CAM and the TFLite
+  converter never see float16.
+* `--resume` — continue an interrupted run. The epoch to restart from is read out
+  of the phase's CSV log, and phase 1 is checkpointed separately so a failure
+  during fine-tuning never costs the warm-up. Point `--ckpt-dir` and `--out-dir`
+  at Google Drive and a dropped Colab session costs one epoch.
 
 Every field in `src/config.py` is a CLI flag, e.g. `--clahe-clip 3.0
 --batch-size 16 --iou-threshold 0.3 --exclude-not-normal --no-use-class-weights`.

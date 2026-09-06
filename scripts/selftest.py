@@ -172,6 +172,18 @@ class Stage:
         return True
 
 
+def _finetune_epochs(run_dir: Path) -> list[int]:
+    """Epoch numbers logged by the fine-tuning phase, in order."""
+    import csv
+
+    path = run_dir / "history_finetune.csv"
+    if not path.exists():
+        return []
+    with open(path, encoding="utf-8", newline="") as fh:
+        return [int(r["epoch"]) for r in csv.DictReader(fh)
+                if str(r.get("epoch", "")).strip().isdigit()]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -219,6 +231,23 @@ def main() -> int:
                     run_dir / "metrics.json",
                     run_dir / "training_curves.png",
                     run_dir / "test_curves.png"])
+
+    if ok:
+        # Resume is the safety net for a dropped Colab session, so prove it
+        # actually continues rather than silently restarting or doing nothing.
+        before = _finetune_epochs(run_dir)
+        ok = s.run("2b/4 resume after an interruption",
+                   [py, "src/train.py", *common, "--head-epochs", "1",
+                    "--finetune-epochs", "2", "--batch-size", "16", "--resume"],
+                   [tmp / "checkpoints" / "densenet121.keras"])
+        after = _finetune_epochs(run_dir)
+        if ok and after != [0, 1]:
+            print(f"  resume did not continue correctly: epochs logged "
+                  f"{before} -> {after}, expected [0, 1]")
+            s.failures.append("2b/4 resume")
+            ok = False
+        elif ok:
+            print(f"  epochs logged {before} -> {after} (continued, not restarted)")
 
     if ok:
         ok = s.run("3/4  Grad-CAM + localisation metric",

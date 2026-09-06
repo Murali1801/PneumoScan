@@ -51,10 +51,32 @@ def build_model(backbone: str = BACKBONE, img_size: int = 224,
     feats = layers.Activation("linear", name="feature_map")(feats)
     x = layers.GlobalAveragePooling2D(name="gap")(feats)
     x = layers.Dropout(dropout, name="dropout")(x)
-    logits = layers.Dense(1, name="logits")(x)
-    prob = layers.Activation("sigmoid", name="prob")(logits)
+    # Pinned to float32 even under a mixed-float16 policy: the loss and the
+    # sigmoid must not be computed in half precision, and Grad-CAM reads the
+    # logit directly.
+    logits = layers.Dense(1, name="logits", dtype="float32")(x)
+    prob = layers.Activation("sigmoid", name="prob", dtype="float32")(logits)
 
     return keras.Model(inputs, prob, name=f"cxr_{backbone}")
+
+
+def to_float32(model: keras.Model, img_size: int, dropout: float) -> keras.Model:
+    """Rebuild the graph under the default float32 policy and copy the weights.
+
+    A model trained with mixed_float16 carries that policy in every layer config,
+    which would follow it into the saved checkpoint, the Grad-CAM code and the
+    TFLite converter. Master weights are float32 regardless, so transferring them
+    into a clean float32 graph costs nothing and keeps everything downstream
+    exactly as it was before mixed precision existed.
+    """
+    prev = keras.mixed_precision.global_policy()
+    keras.mixed_precision.set_global_policy("float32")
+    try:
+        clean = build_model(BACKBONE, img_size, dropout)
+        clean.set_weights(model.get_weights())
+    finally:
+        keras.mixed_precision.set_global_policy(prev)
+    return clean
 
 
 def get_backbone(model: keras.Model) -> keras.Model:

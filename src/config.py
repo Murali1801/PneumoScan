@@ -51,6 +51,12 @@ class Config:
     unfreeze_from: float = 0.5  # unfreeze the last 50% of backbone layers
     patience: int = 4
     use_class_weights: bool = True
+    # float16 compute on the GPU's tensor cores. Roughly 1.5x faster on a T4 and
+    # halves activation memory; master weights stay float32, and the exported
+    # model is rebuilt in float32 so nothing downstream sees float16.
+    mixed_precision: bool = False
+    # Continue an interrupted run from its last checkpoint instead of restarting.
+    resume: bool = False
 
     # ---- augmentation (train only) ----------------------------------------
     aug_rotation: float = 0.03  # fraction of 2*pi  -> about +/- 11 degrees
