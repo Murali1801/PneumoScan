@@ -24,7 +24,8 @@ import numpy as np
 import pandas as pd
 
 from config import Config
-from data import index_raw, make_splits, summarise, class_weights
+from data import (class_weights, duplicate_images_across_splits, index_raw,
+                 make_splits, summarise)
 from preprocess import prepare_image, preprocess_dataset, read_gray, clahe_image
 
 KAGGLE_SLUG = "paultimothymooney/chest-xray-pneumonia"
@@ -137,6 +138,18 @@ def main() -> None:
     print(f"indexed {len(df):,} images, {df.patient.nunique():,} patient groups")
 
     df = make_splits(df, cfg.val_frac, cfg.seed)
+
+    print("checking for byte-identical images across splits ...")
+    dupes = duplicate_images_across_splits(df)
+    if dupes.empty:
+        print("  none found - no image appears in two splits")
+    else:
+        n = dupes.md5.nunique()
+        print(f"  WARNING: {n} image(s) appear in more than one split "
+              f"({len(dupes)} files). Test scores may be optimistic.")
+        print(dupes.head(10).to_string(index=False))
+        Path(cfg.out_dir).mkdir(parents=True, exist_ok=True)
+        dupes.to_csv(Path(cfg.out_dir) / "duplicate_images.csv", index=False)
 
     print(f"\nCLAHE preprocessing -> {cfg.processed_dir}")
     rel = [f"{r.src_split}/{r.cls}/{Path(r.filename).stem}.png" for r in df.itertuples()]
