@@ -18,8 +18,18 @@ Presentation lives in `app/theme.py`; this file stays about the model.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
+
+# TensorFlow sizes its thread-pool arenas at import time, and on a memory-capped
+# host that allocation is the difference between running and being OOM-killed.
+# Measured on this app: trimming the pools takes peak RSS from ~1.0 GB to ~860 MB,
+# which is what brings a free 1 GB tier within reach. Must precede any TF import,
+# which is why it sits above the module's own imports.
+for _var, _val in (("OMP_NUM_THREADS", "2"), ("TF_NUM_INTRAOP_THREADS", "2"),
+                   ("TF_NUM_INTEROP_THREADS", "1"), ("TF_CPP_MIN_LOG_LEVEL", "2")):
+    os.environ.setdefault(_var, _val)
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))

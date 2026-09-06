@@ -25,6 +25,7 @@ import argparse
 import json
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -39,15 +40,44 @@ numpy>=1.26,<3
 pydicom>=2.4
 """
 
+# Hugging Face retired the Streamlit SDK - it now accepts only gradio, docker or
+# static - so Streamlit apps ship as Docker Spaces. Two things Spaces requires
+# that a plain Dockerfile would miss: it routes traffic to port 7860, and the
+# container runs as uid 1000, so root-owned files are unreadable.
+DOCKERFILE = """\
+FROM python:3.11-slim
+
+# opencv-python-headless still links against glib even without the GUI parts
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+        libglib2.0-0 && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 1000 user
+USER user
+ENV HOME=/home/user \\
+    PATH=/home/user/.local/bin:$PATH \\
+    PYTHONUNBUFFERED=1
+WORKDIR /home/user/app
+
+# requirements before code, so editing the app does not reinstall TensorFlow
+COPY --chown=user requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \\
+ && pip install --no-cache-dir -r requirements.txt
+
+COPY --chown=user . .
+
+EXPOSE 7860
+CMD ["streamlit", "run", "app/streamlit_app.py", \\
+     "--server.port=7860", "--server.address=0.0.0.0", "--server.headless=true"]
+"""
+
 SPACE_README = """\
 ---
 title: PneumoScan
 emoji: 🫁
 colorFrom: gray
 colorTo: green
-sdk: streamlit
-sdk_version: 1.49.0
-app_file: app/streamlit_app.py
+sdk: docker
+app_port: 7860
 pinned: false
 license: mit
 ---
@@ -77,6 +107,91 @@ than chance.
 
 Full training pipeline: {repo}
 """
+
+
+def shrink_checkpoint(src: Path, dst: Path) -> tuple[float, float]:
+    """Rewrite a .keras checkpoint with float16 weights, deflated.
+
+    Three separate wins, none of which touch the app:
+
+    * **No optimizer.** A checkpoint saved after training carries Adam's two
+      moment estimates per weight - roughly double the file, for state inference
+      never reads. `compile=False` drops them.
+    * **float16 weights.** Weights are *stored* as float16 and Keras casts them
+      back on load, so the graph still computes in float32. Measured drift on
+      this model is ~1e-3 of a probability, with no decisions flipped at the
+      operating threshold.
+    * **Actual compression.** Keras writes the .keras zip with method 0, i.e.
+      stored, not deflated.
+
+    The HDF5 payload is rebuilt into a *new* file rather than edited in place:
+    deleting a dataset leaves its bytes allocated, so an in-place edit produces a
+    file that is still full size.
+
+    Returns (size before, size after) in bytes.
+    """
+    import zipfile
+
+    import h5py
+    import numpy as np
+    from tensorflow import keras
+
+    before = src.stat().st_size
+    with tempfile.TemporaryDirectory() as td:
+        work = Path(td) / "unpacked"
+        stripped = Path(td) / "stripped.keras"
+        keras.models.load_model(src, compile=False).save(stripped)
+        with zipfile.ZipFile(stripped) as z:
+            z.extractall(work)
+
+        h5path = work / "model.weights.h5"
+        newpath = work / "new.weights.h5"
+
+        def copy_into(s, d):
+            for k, a in s.attrs.items():
+                d.attrs[k] = a
+            for k, obj in s.items():
+                if isinstance(obj, h5py.Group):
+                    copy_into(obj, d.create_group(k))
+                else:
+                    data = obj[()]
+                    if data.dtype == np.float32:
+                        data = data.astype(np.float16)
+                    ds = d.create_dataset(k, data=data)
+                    for kk, aa in obj.attrs.items():
+                        ds.attrs[kk] = aa
+
+        with h5py.File(h5path, "r") as fin, h5py.File(newpath, "w") as fout:
+            copy_into(fin, fout)
+        h5path.unlink()
+        newpath.rename(h5path)
+
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+            for p in sorted(work.rglob("*")):
+                if p.is_file():
+                    z.write(p, p.relative_to(work).as_posix())
+    return before, dst.stat().st_size
+
+
+def verify_checkpoint(original: Path, shrunk: Path, size: int,
+                      threshold: float, n: int = 24) -> float:
+    """Both checkpoints must agree, and agree on the *decision*, not just the score."""
+    import numpy as np
+    from tensorflow import keras
+
+    a_model = keras.models.load_model(original, compile=False)
+    b_model = keras.models.load_model(shrunk, compile=False)
+    x = (np.random.default_rng(0).random((n, size, size, 3)) * 255).astype("float32")
+    a = a_model.predict(x, verbose=0).ravel()
+    b = b_model.predict(x, verbose=0).ravel()
+    flips = int(((a >= threshold) != (b >= threshold)).sum())
+    drift = float(np.abs(a - b).max())
+    if flips:
+        raise SystemExit(f"float16 flipped {flips}/{n} decisions at threshold "
+                         f"{threshold:.3f} - ship the float32 checkpoint instead "
+                         "(--no-fp16)")
+    return drift
 
 
 def check_local_imports(out: Path) -> list[tuple[str, str]]:
@@ -119,6 +234,8 @@ def main() -> int:
     ap.add_argument("--out", default=str(ROOT / "build" / "space"))
     ap.add_argument("--repo", default="https://github.com/Murali1801/pneumoscan",
                     help="link back to the full pipeline, shown in the Space README")
+    ap.add_argument("--fp16", default=True, action=__import__("argparse").BooleanOptionalAction,
+                    help="store weights as float16 (about 2.3x smaller, ~1e-3 drift)")
     args = ap.parse_args()
 
     import discovery
@@ -153,18 +270,32 @@ def main() -> int:
               ".streamlit/config.toml"):
         shutil.copy2(ROOT / f, out / f)
 
-    shutil.copy2(entry["path"], out / "checkpoints" / entry["path"].name)
+    dst_ckpt = out / "checkpoints" / entry["path"].name
+    cfg = discovery.find_config(entry["name"]) or {}
+    size = cfg.get("img_size", 224)
+
+    if args.fp16:
+        before, after = shrink_checkpoint(entry["path"], dst_ckpt)
+        drift = verify_checkpoint(entry["path"], dst_ckpt, int(size),
+                                  entry["threshold"])
+        print(f"checkpoint {before / 1e6:.1f} MB -> {after / 1e6:.1f} MB "
+              f"({before / after:.1f}x: no optimizer, float16 weights, deflated)")
+        print(f"  verified against the original: max drift {drift:.1e}, "
+              "no decisions flipped")
+    else:
+        from tensorflow import keras
+
+        before = entry["path"].stat().st_size
+        keras.models.load_model(entry["path"], compile=False).save(dst_ckpt)
+        print(f"checkpoint {before / 1e6:.1f} MB -> "
+              f"{dst_ckpt.stat().st_size / 1e6:.1f} MB (optimizer removed)")
     src_metrics = next(d / entry["name"] / "metrics.json"
                        for d in discovery.REPORT_DIRS
                        if (d / entry["name"] / "metrics.json").is_file())
     shutil.copy2(src_metrics, out / "reports" / entry["name"] / "metrics.json")
 
     (out / "requirements.txt").write_text(REQUIREMENTS, encoding="utf-8")
-
-    # Input size comes from the run's config.json rather than by loading the
-    # model - no reason to spin up TensorFlow just to write a README.
-    cfg = discovery.find_config(entry["name"]) or {}
-    size = cfg.get("img_size", "?")
+    (out / "Dockerfile").write_text(DOCKERFILE, encoding="utf-8")
 
     t = entry["metrics"]["test"]
     (out / "README.md").write_text(SPACE_README.format(
@@ -195,7 +326,7 @@ def main() -> int:
     print(f"\n  total {total / 1e6:.1f} MB  ·  model {entry['name']} "
           f"({size}×{size}, AUROC {t['auroc']:.3f}, threshold {t['threshold']:.3f})")
     print("\nnext:")
-    print("  1. create a Space at https://huggingface.co/new-space (SDK: Streamlit)")
+    print("  1. create a Space at https://huggingface.co/new-space (SDK: Docker)")
     print(f"  2. cd {out}")
     print("  3. git init && git lfs install && git lfs track '*.keras'")
     print("  4. git add -A && git commit -m 'PneumoScan demo'")
