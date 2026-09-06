@@ -1,9 +1,9 @@
 # PneumoScan — Explainable Chest X-ray Pneumonia Screening
 
 Binary pneumonia screening on **adult** chest radiographs from the RSNA Pneumonia
-Detection Challenge, with CLAHE preprocessing, DenseNet121 / EfficientNet-B0
-transfer learning, **Grad-CAM scored against radiologist bounding boxes**, and a
-TensorFlow Lite export for the mobile app.
+Detection Challenge, with CLAHE preprocessing, DenseNet121 transfer learning,
+**Grad-CAM scored against radiologist bounding boxes**, and a TensorFlow Lite
+export for the mobile app.
 
 *Data Science in Healthcare mini project — Department of Computer Engineering,
 St. John College of Engineering and Management.
@@ -22,7 +22,6 @@ Kaggle: RSNA Pneumonia Detection Challenge (26,684 adult DICOMs)
         │                    └─ cohort table from DICOM headers (age/sex/view)
         │
         ├─ 2. train.py ──► phase 1 frozen head → phase 2 fine-tune
-        │                  DenseNet121 | EfficientNet-B0
         │                  → checkpoints/<run>.keras
         │                  → reports/<run>/  metrics.json, ROC/PR, confusion matrix
         │
@@ -66,21 +65,41 @@ and no native Windows GPU support since 2.11. So:
   pip install -r requirements.txt
   ```
 
+## Verify before you spend an hour
+
+```bash
+python scripts/selftest.py
+```
+
+Generates a small synthetic RSNA-shaped dataset — real DICOMs, real competition
+CSVs — and runs all four stages against it in about two minutes, checking each
+one produced its outputs. `SELF-TEST PASSED` means the code and the environment
+work; anything that fails afterwards is data or credentials, not the pipeline.
+The synthetic DICOMs are 512×512 rather than 1024 on purpose, so box rescaling
+has to actually work instead of passing on a 1:1 scale factor.
+
 ## Running it by hand
 
 ```bash
 python scripts/prepare_data.py --download           # needs Kaggle creds + rules accepted
 python src/train.py --subsample-train 3000 --tag rehearsal   # 20-min dry run
-python src/train.py --backbone densenet121
-python src/train.py --backbone efficientnetb0
-python scripts/make_gradcam_figures.py --backbone densenet121
-python src/export_tflite.py --backbone densenet121
+python src/train.py
+python scripts/make_gradcam_figures.py
+python src/export_tflite.py
 ```
 
 Every field in `src/config.py` is a CLI flag, e.g. `--clahe-clip 3.0
 --batch-size 16 --iou-threshold 0.3 --exclude-not-normal --no-use-class-weights`.
 
 ## Design decisions worth defending in the viva
+
+**Why DenseNet121, and only DenseNet121.** CheXNet (Rajpurkar et al., 2017)
+established this architecture for pneumonia detection on NIH ChestX-ray14, and
+RSNA is a re-annotated subset of exactly that collection — so this is the
+reference architecture evaluated on data from the collection it was validated on.
+Khadidos et al. (2026) report EfficientNet-B0 as more deployment-efficient, but
+on paediatric data; a comparable evaluation on adult radiographs is left as
+future work.
 
 **Grad-CAM is measured, not admired.** RSNA's boxes make explainability
 quantitative. `src/localization.py` reports three metrics — pointing game
@@ -148,12 +167,13 @@ src/config.py         all hyperparameters, mirrored as CLI flags
 src/preprocess.py     DICOM reading + CLAHE — shared by training, figures, inference
 src/data.py           RSNA indexing, boxes, splits, duplicate check (no TF)
 src/pipeline.py       tf.data input pipeline and augmentation
-src/model.py          DenseNet121 / EfficientNet-B0; named feature_map + logits
+src/model.py          DenseNet121; named feature_map + logits layers
 src/train.py          two-phase training
 src/evaluate.py       threshold selection, metrics, ROC/PR/confusion plots
 src/gradcam.py        Grad-CAM and Grad-CAM++ + figure rendering
 src/localization.py   pointing game / energy / IoU against the radiologist boxes
 src/export_tflite.py  SavedModel → TFLite, with Keras-parity check
+scripts/selftest.py              end-to-end check on synthetic data
 scripts/prepare_data.py          download + DICOM + CLAHE + splits + boxes
 scripts/make_gradcam_figures.py  explanation panels + the localisation report
 notebooks/train_colab.ipynb      the notebook that actually trains
@@ -180,7 +200,6 @@ the `.tflite` file all feed the network identical tensors.
 | `reports/<run>/training_curves.png` | loss, AUC, accuracy across both phases |
 | `reports/<run>/test_curves.png` | ROC and precision-recall |
 | `reports/<run>/gradcam_*.png` | explanation panels with boxes drawn |
-| `reports/backbone_comparison.csv` | DenseNet121 vs EfficientNet-B0 |
 | `checkpoints/<run>.tflite` | mobile model (float32 and int8-weights variants) |
 
 ## Limitations to state in the report

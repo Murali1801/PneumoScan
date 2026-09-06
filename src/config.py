@@ -9,7 +9,7 @@ from pathlib import Path
 # Repository root = parent of src/
 ROOT = Path(__file__).resolve().parent.parent
 
-BACKBONES = ("densenet121", "efficientnetb0")
+BACKBONE = "densenet121"  # the only architecture this project trains
 CLASSES = ("NORMAL", "PNEUMONIA")  # index 0, 1 -> label used for the sigmoid target
 
 
@@ -39,7 +39,7 @@ class Config:
     subsample_train: int = 0
 
     # ---- model -------------------------------------------------------------
-    backbone: str = "densenet121"
+    backbone: str = BACKBONE
     dropout: float = 0.35
 
     # ---- training ----------------------------------------------------------

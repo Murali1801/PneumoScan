@@ -1,7 +1,7 @@
 """Stage 2: two-phase transfer-learning on the CLAHE'd RSNA dataset.
 
-    python src/train.py --backbone densenet121
-    python src/train.py --backbone efficientnetb0 --finetune-epochs 20
+    python src/train.py
+    python src/train.py --finetune-epochs 20
     python src/train.py --subsample-train 3000 --tag rehearsal   # fast dry run
 
 Phase 1 (warm-up)  - backbone frozen, only the new head trains.  Without this,
