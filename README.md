@@ -91,6 +91,67 @@ python src/export_tflite.py
 Every field in `src/config.py` is a CLI flag, e.g. `--clahe-clip 3.0
 --batch-size 16 --iou-threshold 0.3 --exclude-not-normal --no-use-class-weights`.
 
+## Results (full run, 26,684 images, 55 min on a Colab T4)
+
+**Test set: 4,447 images, 1,008 positive (22.7% prevalence).**
+
+| Metric | Value |
+|---|---|
+| **AUROC** | **0.876** (95% CI 0.865 – 0.888) |
+| AUPRC | 0.706 (prevalence baseline 0.227) |
+| Sensitivity | 0.821 |
+| Specificity | 0.774 |
+| NPV | 0.937 |
+| PPV | 0.516 |
+| F1 | 0.634 |
+| Accuracy | 0.785 |
+| Confusion (tn, fp, fn, tp) | 2661, 778, 180, 828 |
+
+**Do not lead with accuracy.** 77.3% of the test set is negative, so predicting
+"no pneumonia" for every image scores 0.773 — the model's 0.785 is barely one
+point above a classifier that does nothing. Accuracy is uninformative at this
+prevalence; AUROC, and the sensitivity/specificity pair, are the honest headline.
+
+The framing that fits the tool: **NPV 0.937** — when the model says no pneumonia
+it is right 94% of the time. That is a rule-out screening aid. PPV 0.516 means
+roughly half of flagged films are false alarms, so it cannot stand alone as a
+diagnostic.
+
+Validation AUROC was 0.887 against 0.876 on test — a 0.011 gap, inside the
+confidence interval, so no meaningful overfitting to the selection set.
+
+### Grad-CAM localisation vs radiologist boxes (n = 828 true positives)
+
+| | Grad-CAM | Grad-CAM++ | chance |
+|---|---|---|---|
+| Pointing game | **0.435** | 0.418 | 0.131 |
+| Lift over chance | **3.3×** | 3.2× | 1.0× |
+| Energy pointing game | 0.304 | 0.291 | 0.131 |
+| IoU@0.5 | 0.267 | 0.268 | — |
+
+The hottest pixel of the heatmap falls inside a radiologist's box 3.3 times more
+often than chance. **Grad-CAM++ did not beat Grad-CAM here** — the two are within
+noise of each other, which is worth reporting as-is rather than quietly keeping
+whichever won.
+
+A ceiling worth naming: the CAM is computed on a 7×7 feature map upsampled to
+224×224, so one cell covers 32×32 pixels while the median box is not much larger.
+Some of the localisation error is resolution, not the model looking in the wrong
+place.
+
+### Training
+
+15 epochs (3 frozen-head + 12 fine-tuning). Validation AUROC peaked at 0.887 on
+epoch 12 and drifted down slightly after, so the run had converged — more epochs
+would not have helped.
+
+### TFLite
+
+| File | Size | Max abs. difference vs Keras |
+|---|---|---|
+| `densenet121.tflite` | 27.9 MB | 1.1e-06 |
+| `densenet121_dynamic.tflite` | 7.4 MB | 4.4e-02 |
+
 ## Design decisions worth defending in the viva
 
 **Why DenseNet121, and only DenseNet121.** CheXNet (Rajpurkar et al., 2017)
@@ -105,9 +166,9 @@ future work.
 quantitative. `src/localization.py` reports three metrics — pointing game
 (is the hottest pixel inside a box?), energy pointing game (what share of the
 heatmap's mass is inside?), and IoU@τ — each against a **chance baseline** equal
-to the boxes' own share of the image. Boxes cover roughly a quarter of a film, so
-a random heatmap already "scores" ~0.25 on the pointing game; the number that
-means something is the **lift** over that baseline. A metric reported without its
+to the boxes' own share of the image. Measured on this dataset the boxes cover
+**13.1%** of a film, so a random heatmap already "scores" 0.131 on the pointing
+game; the number that means something is the **lift** over that baseline. A metric reported without its
 baseline is not evidence, and this is the single strongest thing in the project.
 
 **"Not Normal" films are kept as negatives.** A third of the dataset is abnormal

@@ -1,0 +1,7 @@
+split,cls,images,boxes
+train,NORMAL,13762,0
+train,PNEUMONIA,4027,6394
+val,NORMAL,3471,0
+val,PNEUMONIA,977,1549
+test,NORMAL,3439,0
+test,PNEUMONIA,1008,1612

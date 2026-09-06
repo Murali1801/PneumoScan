@@ -1,0 +1,2 @@
+run,val AUROC,test AUROC,95% CI,accuracy,sensitivity,specificity,F1,threshold,min
+densenet121,0.8867,0.8765,0.865-0.888,0.7846,0.8214,0.7738,0.6335,0.489,55.26

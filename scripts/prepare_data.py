@@ -83,11 +83,19 @@ def cohort_table(df: pd.DataFrame, n: int = 1500, seed: int = 42) -> pd.DataFram
     meta = [dicom_metadata(p) for p in sample.path]
     m = pd.DataFrame(meta)
     ages = m.age.dropna()
+
+    if ages.empty:
+        # Never emit a silently blank cohort table - say what was actually found.
+        seen = m.age_raw.dropna().unique()[:5]
+        print("  WARNING: no PatientAge could be parsed. Raw values seen: "
+              + (", ".join(map(repr, seen)) if len(seen) else "tag absent entirely"))
+
     rows = [{
         "n_sampled": len(m),
-        "age_min": int(ages.min()) if len(ages) else None,
-        "age_median": float(ages.median()) if len(ages) else None,
-        "age_max": int(ages.max()) if len(ages) else None,
+        "n_with_age": int(len(ages)),
+        "age_min": round(float(ages.min()), 1) if len(ages) else None,
+        "age_median": round(float(ages.median()), 1) if len(ages) else None,
+        "age_max": round(float(ages.max()), 1) if len(ages) else None,
         "pct_under_18": round(100.0 * (ages < 18).mean(), 2) if len(ages) else None,
         "pct_male": round(100.0 * (m.sex == "M").mean(), 2),
         "view_PA": round(100.0 * (m.view == "PA").mean(), 2),

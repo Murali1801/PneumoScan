@@ -1,0 +1,10 @@
+{
+  "densenet121.tflite": {
+    "size_mb": 27.91,
+    "max_abs_diff_vs_keras": 1.0728836059570312e-06
+  },
+  "densenet121_dynamic.tflite": {
+    "size_mb": 7.42,
+    "max_abs_diff_vs_keras": 0.04410707950592041
+  }
+}

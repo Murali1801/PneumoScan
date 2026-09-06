@@ -39,16 +39,41 @@ def read_dicom(path: str | Path) -> np.ndarray:
     return arr
 
 
+def parse_dicom_age(raw) -> float | None:
+    """DICOM PatientAge -> age in years.
+
+    The standard says the value is 4 characters, `nnnD`/`nnnW`/`nnnM`/`nnnY`
+    (e.g. "058Y").  Plenty of real archives - RSNA included - just store a bare
+    number of years instead ("51"), so a parser that insists on the unit suffix
+    silently returns nothing for the entire dataset.  Both forms are accepted.
+    """
+    s = str(raw or "").strip().upper()
+    if not s:
+        return None
+    if s[-1].isalpha():
+        unit, digits = s[-1], s[:-1]
+    else:
+        unit, digits = "Y", s
+    digits = digits.lstrip("0") or "0"
+    if not digits.isdigit():
+        return None
+    n = int(digits)
+    return {"Y": float(n), "M": n / 12.0, "W": n / 52.0, "D": n / 365.25}.get(unit)
+
+
 def dicom_metadata(path: str | Path) -> dict:
-    """Age / sex / view, for the cohort table in the report."""
+    """Age / sex / view, for the cohort table in the report.
+
+    `age_raw` is carried through so a parsing failure is diagnosable from the
+    output rather than showing up as a column of blanks.
+    """
     import pydicom
 
     ds = pydicom.dcmread(str(path), stop_before_pixels=True)
-    age = str(getattr(ds, "PatientAge", "") or "").strip()
-    # DICOM ages look like "058Y"
-    years = int(age[:-1]) if age[-1:].upper() == "Y" and age[:-1].isdigit() else None
+    raw_age = str(getattr(ds, "PatientAge", "") or "").strip()
     return {
-        "age": years,
+        "age": parse_dicom_age(raw_age),
+        "age_raw": raw_age or None,
         "sex": str(getattr(ds, "PatientSex", "") or "").strip() or None,
         "view": str(getattr(ds, "ViewPosition", "") or "").strip() or None,
         "rows": int(getattr(ds, "Rows", 0)) or None,
@@ -108,6 +133,42 @@ def to_model_input(gray: np.ndarray) -> np.ndarray:
 # --------------------------------------------------------------------------
 # batch pass
 # --------------------------------------------------------------------------
+MANIFEST = "_preprocess.json"
+
+
+def check_manifest(out_root: str | Path, size: int, clip: float, grid: int) -> None:
+    """Refuse to mix preprocessing settings inside one processed/ directory.
+
+    Files are skipped when they already exist, which makes an interrupted run
+    resumable - but it also means that re-running with a different --img-size
+    would silently keep the old images at the old size, and the pipeline would
+    then upsample 224px data to 384 and report the result as a 384px model.
+    Recording the settings and comparing turns that silent corruption into an
+    error that says exactly what to do.
+    """
+    import json
+
+    out_root = Path(out_root)
+    want = {"img_size": int(size), "clahe_clip": float(clip), "clahe_grid": int(grid)}
+    path = out_root / MANIFEST
+
+    if path.exists():
+        have = json.loads(path.read_text(encoding="utf-8"))
+        if have != want:
+            diffs = [f"{k}: {have.get(k)} -> {want[k]}"
+                     for k in want if have.get(k) != want[k]]
+            raise SystemExit(
+                f"\n{out_root} was built with different preprocessing:\n  "
+                + "\n  ".join(diffs)
+                + "\n\nThose images cannot be reused. Either:\n"
+                f"  rm -rf {out_root}          # rebuild at the new settings\n"
+                f"  --processed-dir <other>    # keep both side by side\n")
+        return
+
+    out_root.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(want, indent=2), encoding="utf-8")
+
+
 def preprocess_dataset(rows, out_root: str | Path, size: int = 224,
                        clip: float = 2.0, grid: int = 8, workers: int = 8,
                        progress_every: int = 2000) -> list[str]:
@@ -118,6 +179,7 @@ def preprocess_dataset(rows, out_root: str | Path, size: int = 224,
     skipped, so an interrupted run can simply be restarted.
     """
     out_root = Path(out_root)
+    check_manifest(out_root, size, clip, grid)
     rows = list(rows)
     total = len(rows)
     done = 0

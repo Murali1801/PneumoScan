@@ -1,0 +1,23 @@
+{
+  "threshold": 0.4892563223838806,
+  "figures": {
+    "gradcam_pneumonia": [
+      "f40574cd...  (2 box)",
+      "dc2a32fa...  (2 box)",
+      "759a11de...  (3 box)",
+      "cfc035aa...  (2 box)"
+    ],
+    "gradcam_normal": [
+      "e13755c6...  (0 box)",
+      "cc6c1c5d...  (0 box)",
+      "97824fba...  (0 box)",
+      "8456b86c...  (0 box)"
+    ],
+    "gradcam_errors": [
+      "c544e224...  (0 box)",
+      "3cdfb951...  (0 box)",
+      "556db285...  (0 box)",
+      "4b597014...  (0 box)"
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+detailed_class,train,val,test
+Lung Opacity,4027,977,1008
+No Lung Opacity / Not Normal,7852,1999,1970
+Normal,5910,1472,1469

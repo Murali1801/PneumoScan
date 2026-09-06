@@ -1,0 +1,26 @@
+{
+  "Grad-CAM": {
+    "n": 828,
+    "pointing_game": 0.43478260869565216,
+    "pointing_game_chance": 0.13099000214895742,
+    "pointing_game_lift": 3.319204531359821,
+    "energy_pointing_game": 0.30379949515510535,
+    "method": "gradcam",
+    "energy_pointing_game_chance": 0.13099000214895742,
+    "iou@0.50": 0.26659179909021535,
+    "mean_box_coverage": 0.13099000214895742,
+    "mean_confidence": 0.8299539171267247
+  },
+  "Grad-CAM++": {
+    "n": 828,
+    "pointing_game": 0.4178743961352657,
+    "pointing_game_chance": 0.13099000214895742,
+    "pointing_game_lift": 3.1901243551402727,
+    "energy_pointing_game": 0.2909261308189207,
+    "method": "gradcam++",
+    "energy_pointing_game_chance": 0.13099000214895742,
+    "iou@0.50": 0.267986916550788,
+    "mean_box_coverage": 0.13099000214895742,
+    "mean_confidence": 0.8299539171267247
+  }
+}
