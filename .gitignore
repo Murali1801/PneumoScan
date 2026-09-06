@@ -1,0 +1,13 @@
+data/raw/
+data/processed/
+data/*.zip
+data/splits.csv
+checkpoints/
+reports/*/
+*.tflite
+*.keras
+saved_model/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
