@@ -84,16 +84,33 @@ def iou_at(heat_full: np.ndarray, mask: np.ndarray, tau: float = 0.5) -> float:
 # --------------------------------------------------------------------------
 # evaluation over a set of images
 # --------------------------------------------------------------------------
+def auto_batch(img_size: int) -> int:
+    """A batch size that fits on a 16 GB GPU for Grad-CAM at this input size.
+
+    Grad-CAM runs under a GradientTape, so the whole forward pass is retained for
+    the backward pass - memory grows with the square of the input edge, and it is
+    several times what plain inference needs.  32 is comfortable at 224; scale
+    from there and let `evaluate_localization` back off further if it still OOMs.
+    """
+    return max(2, int(32 * (224.0 / float(img_size)) ** 2))
+
+
 def evaluate_localization(explainer, rows: pd.DataFrame, cfg, *,
-                          batch_size: int = 32, tau: float = 0.5,
+                          batch_size: int | None = None, tau: float = 0.5,
                           target: str = "pneumonia") -> dict:
     """Run the explainer over `rows` and score its maps against their boxes.
 
     `rows` must carry `proc_path` and `boxes_scaled` (boxes already in the
     resized coordinate frame).  Only images that actually have boxes are scored -
     a negative film has nothing to localise.
+
+    The batch size adapts: it starts from `auto_batch` and halves on an
+    out-of-memory error, so a larger `--img-size` cannot kill the run after
+    training has already succeeded.
     """
-    from preprocess import prepare_image, to_model_input
+    import tensorflow as tf
+
+    from preprocess import to_model_input
     from data import parse_boxes
 
     rows = rows[rows.n_boxes > 0]
@@ -101,13 +118,24 @@ def evaluate_localization(explainer, rows: pd.DataFrame, cfg, *,
         return {"n": 0, "note": "no boxed images in this selection"}
 
     size = cfg.img_size
+    bs = batch_size or auto_batch(size)
     hits, energies, ious, coverages, probs = [], [], [], [], []
 
-    for start in range(0, len(rows), batch_size):
-        chunk = rows.iloc[start:start + batch_size]
+    start = 0
+    while start < len(rows):
+        chunk = rows.iloc[start:start + bs]
         grays = [cv2.imread(p, cv2.IMREAD_GRAYSCALE) for p in chunk.proc_path]
         batch = np.concatenate([to_model_input(g) for g in grays]).astype("float32")
-        heats, p = explainer.explain(batch, target=target)
+        try:
+            heats, p = explainer.explain(batch, target=target)
+        except tf.errors.ResourceExhaustedError:
+            if bs <= 1:
+                raise
+            bs = max(1, bs // 2)
+            print(f"    GPU out of memory - retrying with batch size {bs}",
+                  flush=True)
+            continue
+        start += len(chunk)
 
         for heat, boxes_json, prob in zip(heats, chunk.boxes_scaled, p):
             boxes = parse_boxes(boxes_json)

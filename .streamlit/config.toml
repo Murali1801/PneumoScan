@@ -1,0 +1,14 @@
+# Light, cool-neutral ground. Radiographs are the darkest thing on screen, so the
+# interface stays pale and low-contrast and lets the imagery carry the attention.
+[theme]
+base = "light"
+primaryColor = "#0D9488"
+backgroundColor = "#F7F9FB"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#0F172A"
+
+[server]
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false

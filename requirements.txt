@@ -7,4 +7,4 @@ pandas>=2.1
 scikit-learn>=1.4
 matplotlib>=3.8
 kaggle>=1.6               # competition download only
-streamlit>=1.33           # demo app (stage 5)
+streamlit>=1.49           # demo app; width='stretch' needs >=1.49

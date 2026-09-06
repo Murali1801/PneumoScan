@@ -27,8 +27,8 @@ from tensorflow import keras
 from config import Config
 from data import parse_boxes
 from gradcam import CAMExplainer, figure_grid, overlay
-from localization import (compare_methods, draw_boxes, evaluate_localization,
-                          format_localization)
+from localization import (auto_batch, compare_methods, draw_boxes,
+                          evaluate_localization, format_localization)
 from preprocess import to_model_input
 
 BOX_COLOUR = (0, 255, 0)
@@ -61,6 +61,8 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=4, help="cases per figure")
     ap.add_argument("--loc-max", type=int, default=1500,
                     help="cap images used for the localisation metrics (0 = all)")
+    ap.add_argument("--loc-batch", type=int, default=0,
+                    help="batch size for the localisation pass (0 = pick from --img-size)")
     Config.add_args(ap)
     args = ap.parse_args()
     cfg = Config.from_args(args)
@@ -153,11 +155,13 @@ def main() -> None:
     boxed = test[(test.n_boxes > 0) & test.correct]
     if args.loc_max and len(boxed) > args.loc_max:
         boxed = boxed.sample(args.loc_max, random_state=cfg.seed)
+    bs = args.loc_batch or auto_batch(cfg.img_size)
     print(f"\nscoring localisation on {len(boxed):,} correctly-detected "
-          "pneumonia cases ...")
+          f"pneumonia cases (batch {bs}, halves on OOM) ...")
 
-    table = compare_methods({"Grad-CAM": cam, "Grad-CAM++": campp},
-                            boxed, cfg, tau=cfg.iou_threshold)
+    table = compare_methods({"Grad-CAM": cam, "Grad-CAM++": campp}, boxed, cfg,
+                            tau=cfg.iou_threshold,
+                            batch_size=args.loc_batch or None)
     table.to_csv(cfg.run_dir / "localization.csv", index=False)
     report = {r["explainer"]: {k: v for k, v in r.items() if k != "explainer"}
               for r in table.to_dict("records")}

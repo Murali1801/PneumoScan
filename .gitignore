@@ -11,3 +11,6 @@ __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
 .venv/
+build/
+pneumoscan_320/
+.venv/
